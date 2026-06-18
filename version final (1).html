@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GastroSync Pro - Gestión de Pedidos en Tiempo Real</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons (Versión UMD específica para evitar conflictos de módulos ESM) -->
+  <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+  <!-- React y ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <!-- Babel para transpilar JSX en caliente -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Configuración de Fuentes -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2 family=Plus+Jakarta+Sans:wght=300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    /* Estilos personalizados para barra de scroll elegante */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    .dark ::-webkit-scrollbar-thumb {
+      background: #475569;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 dark:bg-zinc-950 transition-colors duration-200">
+  <div id="root"></div>
+
+  <!-- Configuración segura de Babel para forzar el runtime clásico sin conflictos de importSource -->
+  <script>
+    if (window.Babel) {
+      Babel.registerPreset('custom-react', {
+        presets: [
+          [Babel.availablePresets['env'], { modules: false }],
+          [Babel.availablePresets['react'], { runtime: 'classic' }]
+        ]
+      });
+    }
+  </script>
+
+  <script type="text/babel" data-presets="custom-react">
+    const { useState, useEffect, useRef } = React;
+
+    const CODIGO_ACCESO_CORRECTO = "901310148";
+
+    function App() {
+      // --- CONTROL DE ACCESO GENERAL ---
+      const [accesoAutorizado, setAccesoAutorizado] = useState(() => {
+        return localStorage.getItem('gastrosync_acceso_general') === 'confirmado';
+      });
+      const [codigoInput, setCodigoInput] = useState("");
+      const [errorCodigo, setErrorCodigo] = useState("");
+
+      // --- ROLES Y ESTADOS DEL SISTEMA ---
+      const [role, setRole] = useState(null); // 'mesero' | 'cocina' | 'admin' | null
+      
+      // El menú por defecto inicia completamente vacío para evitar productos automáticos o mock data
+      const [menu, setMenu] = useState(() => {
+        const saved = localStorage.getItem('gastrosync_menu');
+        return saved ? JSON.parse(saved) : [];
+      });
+      
+      const [categorias, setCategorias] = useState(() => {
+        const saved = localStorage.getItem('gastrosync_categorias');
+        return saved ? JSON.parse(saved) : ["Entradas", "Platos Fuertes", "Bebidas", "Postres"];
+      });
+
+      const [pedidos, setPedidos] = useState(() => {
+        const saved = localStorage.getItem('gastrosync_pedidos');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [adminPassword, setAdminPassword] = useState(() => {
+        return localStorage.getItem('gastrosync_admin_pass') || "admin123";
+      });
+
+      // Preferencia de tema (oscuro/claro)
+      const [darkMode, setDarkMode] = useState(() => {
+        return localStorage.getItem('gastrosync_theme') === 'dark';
+      });
+
+      // Estados de control para formularios y modales de seguridad
+      const [modalPasswordAdmin, setModalPasswordAdmin] = useState(false);
+      const [passInput, setPassInput] = useState("");
+      const [passError, setPassError] = useState("");
+      const [notificacion, setNotificacion] = useState(null);
+
+      // --- SINCRONIZADORES DE PERSISTENCIA ---
+      useEffect(() => {
+        localStorage.setItem('gastrosync_menu', JSON.stringify(menu));
+      }, [menu]);
+
+      useEffect(() => {
+        localStorage.setItem('gastrosync_categorias', JSON.stringify(categorias));
+      }, [categorias]);
+
+      useEffect(() => {
+        localStorage.setItem('gastrosync_pedidos', JSON.stringify(pedidos));
+      }, [pedidos]);
+
+      useEffect(() => {
+        localStorage.setItem('gastrosync_theme', darkMode ? 'dark' : 'light');
+        if (darkMode) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }, [darkMode]);
+
+      // Inicialización periódica de iconos de Lucide
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+
+      // Helper para alertas temporales no intrusivas
+      const mostrarNotificacion = (mensaje, tipo = 'success') => {
+        setNotificacion({ mensaje, tipo });
+        setTimeout(() => setNotificacion(null), 4000);
+      };
+
+      // --- SINCRONIZACIÓN EN TIEMPO REAL ENTRE DISPOSITIVOS / PESTAÑAS ---
+      useEffect(() => {
+        const handleStorageChange = (e) => {
+          if (e.key === 'gastrosync_pedidos') {
+            setPedidos(JSON.parse(e.newValue || '[]'));
+            mostrarNotificacion("Sincronización: Pedidos actualizados en tiempo real", "info");
+          }
+          if (e.key === 'gastrosync_menu') {
+            setMenu(JSON.parse(e.newValue || '[]'));
+            mostrarNotificacion("Sincronización: Menú actualizado en tiempo real", "info");
+          }
+          if (e.key === 'gastrosync_categorias') {
+            setCategorias(JSON.parse(e.newValue || '[]'));
+          }
+          if (e.key === 'gastrosync_acceso_general' && e.newValue !== 'confirmado') {
+            setAccesoAutorizado(false);
+            setRole(null);
+          }
+        };
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+      }, []);
+
+      // --- CONTROL DE ACCESO GENERAL MANDATORIO ---
+      const verificarCodigoGeneral = (e) => {
+        e.preventDefault();
+        if (codigoInput.trim() === CODIGO_ACCESO_CORRECTO) {
+          setAccesoAutorizado(true);
+          localStorage.setItem('gastrosync_acceso_general', 'confirmado');
+          setErrorCodigo("");
+          setCodigoInput("");
+          mostrarNotificacion("Código de acceso correcto. Bienvenido al sistema global.", "success");
+        } else {
+          setErrorCodigo("Código de acceso incorrecto. Intente nuevamente.");
+        }
+      };
+
+      const revocarAccesoGeneral = () => {
+        setAccesoAutorizado(false);
+        setRole(null);
+        localStorage.removeItem('gastrosync_acceso_general');
+        mostrarNotificacion("Acceso general revocado.", "info");
+      };
+
+      // --- ACCESO PANEL ADMINISTRATIVO ---
+      const intentarAccesoAdmin = () => {
+        if (passInput === adminPassword) {
+          setRole('admin');
+          setModalPasswordAdmin(false);
+          setPassInput("");
+          setPassError("");
+          mostrarNotificacion("Acceso Administrativo autorizado.", "success");
+        } else {
+          setPassError("Contraseña incorrecta. Intente de nuevo.");
+        }
+      };
+
+      const cerrarSesionRol = () => {
+        setRole(null);
+        mostrarNotificacion("Sesión de rol finalizada.", "info");
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col justify-between">
+          
+          {/* Notificaciones flotantes */}
+          {notificacion && (
+            <div className={`fixed bottom-4 right-4 z-50 p-4 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce border text-white ${
+              notificacion.tipo === 'success' ? 'bg-emerald-600 border-emerald-500' :
+              notificacion.tipo === 'error' ? 'bg-rose-600 border-rose-500' : 'bg-indigo-600 border-indigo-500'
+            }`}>
+              <span className="font-bold text-sm">{notificacion.mensaje}</span>
+              <button onClick={() => setNotificacion(null)} className="hover:opacity-75">
+                <i data-lucide="x" className="w-4 h-4"></i>
+              </button>
+            </div>
+          )}
+
+          {/* BARRA DE NAVEGACIÓN */}
+          <nav className="bg-white dark:bg-zinc-900 border-b border-slate-100 dark:border-zinc-800 sticky top-0 z-40 transition-colors">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between h-16 items-center">
+                <div className="flex items-center gap-3">
+                  <div className="bg-indigo-600 p-2.5 rounded-xl text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center">
+                    <i data-lucide="chef-hat" className="w-6 h-6"></i>
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-1.5">
+                      GastroSync <span className="text-indigo-600 dark:text-indigo-400 font-medium text-xs bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-900">PRO</span>
+                    </h1>
+                    <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-semibold tracking-wider uppercase">Sistema Cerrado de Pedidos</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  {/* Toggle Oscuro/Claro */}
+                  <button 
+                    onClick={() => setDarkMode(!darkMode)}
+                    className="p-2 rounded-xl bg-slate-50 dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 transition-all"
+                    title="Alternar tema visual"
+                  >
+                    {darkMode ? <i data-lucide="sun" className="w-5 h-5"></i> : <i data-lucide="moon" className="w-5 h-5"></i>}
+                  </button>
+
+                  {accesoAutorizado && (
+                    <div className="hidden sm:flex items-center gap-2 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1.5 rounded-xl border border-emerald-100 dark:border-emerald-900/30 text-emerald-700 dark:text-emerald-400">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span className="text-xs font-bold tracking-tight">Sincronización Activa</span>
+                    </div>
+                  )}
+
+                  {role && (
+                    <button 
+                      onClick={cerrarSesionRol}
+                      className="flex items-center gap-2 bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/30 px-4 py-2 rounded-xl text-rose-600 dark:text-rose-400 text-sm font-bold transition-all border border-rose-100 dark:border-rose-900/20"
+                    >
+                      <i data-lucide="log-out" className="w-4 h-4"></i>
+                      <span className="hidden md:inline">Cambiar Rol</span>
+                    </button>
+                  )}
+
+                  {accesoAutorizado && !role && (
+                    <button 
+                      onClick={revocarAccesoGeneral}
+                      className="flex items-center gap-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 px-4 py-2 rounded-xl text-slate-600 dark:text-zinc-300 text-sm font-bold transition-all border border-slate-200 dark:border-zinc-700"
+                    >
+                      <i data-lucide="shield-alert" className="w-4 h-4"></i>
+                      <span className="hidden md:inline">Cerrar Sistema</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </nav>
+
+          {/* SECCIONES Y VISTAS */}
+          <main className="flex-grow max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+            
+            {/* 1. COMPROBACIÓN MANDATORIA DE CÓDIGO DE ACCESO */}
+            {!accesoAutorizado ? (
+              <div className="max-w-md mx-auto py-16 md:py-24">
+                <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800/80 p-8 rounded-3xl shadow-2xl space-y-6">
+                  <div className="text-center">
+                    <div className="inline-block bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 p-4 rounded-2xl mb-4 border border-indigo-100/50 dark:border-indigo-900/30">
+                      <i data-lucide="shield-check" className="w-8 h-8"></i>
+                    </div>
+                    <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Acceso Privado GastroSync</h2>
+                    <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1.5 leading-relaxed">
+                      Este terminal requiere el código general de seguridad para conectarse a la sesión compartida del establecimiento.
+                    </p>
+                  </div>
+
+                  <form onSubmit={verificarCodigoGeneral} className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Código de Acceso General</label>
+                      <input 
+                        type="password" 
+                        placeholder="Ingrese el código de 9 dígitos" 
+                        value={codigoInput}
+                        onChange={(e) => setCodigoInput(e.target.value)}
+                        className="w-full text-center bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-4 text-lg font-mono font-black focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                        autoFocus
+                      />
+                      {errorCodigo && (
+                        <p className="text-xs text-rose-500 font-semibold mt-2 text-center flex items-center justify-center gap-1">
+                          <i data-lucide="alert-circle" className="w-3.5 h-3.5"></i>
+                          {errorCodigo}
+                        </p>
+                      )}
+                    </div>
+
+                    <button 
+                      type="submit"
+                      className="w-full bg-slate-900 hover:bg-indigo-600 dark:bg-zinc-800 dark:hover:bg-indigo-600 text-white font-bold py-4 rounded-2xl transition-all shadow-lg text-sm"
+                    >
+                      Conectar Terminal
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ) : !role ? (
+              /* 2. PANTALLA DE SELECCIÓN DE ROL (SÓLO SI ACCESO GENERAL CONFIRMADO) */
+              <div className="max-w-4xl mx-auto py-12 md:py-20">
+                <div className="text-center mb-12">
+                  <span className="text-xs bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold px-3 py-1.5 rounded-full border border-indigo-100 dark:border-indigo-900/40 uppercase tracking-wider">Sesión Conectada Exitosamente</span>
+                  <h2 className="text-3xl md:text-5xl font-black text-slate-900 dark:text-white tracking-tight mt-4">
+                    Seleccione su Espacio de Trabajo
+                  </h2>
+                  <p className="text-slate-500 dark:text-zinc-400 text-sm md:text-base max-w-2xl mx-auto mt-2">
+                    Las comandas y actualizaciones se sincronizarán inmediatamente entre todos los dispositivos que compartan este canal.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                  {/* Rol Mesero */}
+                  <button 
+                    onClick={() => { setRole('mesero'); mostrarNotificacion("Iniciando Interfaz de Ventas.", "info"); }}
+                    className="group bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 hover:border-indigo-500 dark:hover:border-indigo-400 p-8 rounded-3xl text-left shadow-md hover:shadow-2xl transition-all duration-300 flex flex-col justify-between h-[280px]"
+                  >
+                    <div className="bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 p-4 rounded-2xl w-fit group-hover:scale-110 transition-transform">
+                      <i data-lucide="clipboard-list" className="w-8 h-8"></i>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">Mesas y Habitaciones</h3>
+                      <p className="text-sm text-slate-500 dark:text-zinc-400 mt-2">Tome comandas del menú real creado por el administrador, añada observaciones y monitoree estados.</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 mt-4">
+                      Abrir Comandero <i data-lucide="arrow-right" className="w-4 h-4"></i>
+                    </div>
+                  </button>
+
+                  {/* Rol Cocina */}
+                  <button 
+                    onClick={() => { setRole('cocina'); mostrarNotificacion("Iniciando Monitor de Cocina.", "info"); }}
+                    className="group bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 hover:border-amber-500 dark:hover:border-amber-400 p-8 rounded-3xl text-left shadow-md hover:shadow-2xl transition-all duration-300 flex flex-col justify-between h-[280px]"
+                  >
+                    <div className="bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 p-4 rounded-2xl w-fit group-hover:scale-110 transition-transform">
+                      <i data-lucide="chef-hat" className="w-8 h-8"></i>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">Cocina & Barra</h3>
+                      <p className="text-sm text-slate-500 dark:text-zinc-400 mt-2">Reciba comandas reales al instante, organice prioridades de preparación y notifique despachos.</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 mt-4">
+                      Ver Monitor de Producción <i data-lucide="arrow-right" className="w-4 h-4"></i>
+                    </div>
+                  </button>
+
+                  {/* Rol Administración */}
+                  <button 
+                    onClick={() => setModalPasswordAdmin(true)}
+                    className="group bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 hover:border-emerald-500 dark:hover:border-emerald-400 p-8 rounded-3xl text-left shadow-md hover:shadow-2xl transition-all duration-300 flex flex-col justify-between h-[280px]"
+                  >
+                    <div className="bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 p-4 rounded-2xl w-fit group-hover:scale-110 transition-transform">
+                      <i data-lucide="sliders" className="w-8 h-8"></i>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">Administración</h3>
+                      <p className="text-sm text-slate-500 dark:text-zinc-400 mt-2">Gestione el catálogo de platos de manera estrictamente manual, audite ventas y configure accesos.</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-4">
+                      Panel de Control Seguro <i data-lucide="arrow-right" className="w-4 h-4"></i>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            ) : role === 'mesero' ? (
+              <WaiterInterface 
+                menu={menu} 
+                categorias={categorias} 
+                pedidos={pedidos} 
+                setPedidos={setPedidos} 
+                mostrarNotificacion={mostrarNotificacion} 
+              />
+            ) : role === 'cocina' ? (
+              <KitchenInterface 
+                pedidos={pedidos} 
+                setPedidos={setPedidos} 
+                mostrarNotificacion={mostrarNotificacion} 
+              />
+            ) : (
+              <AdminInterface 
+                menu={menu} 
+                setMenu={setMenu}
+                categorias={categorias} 
+                setCategorias={setCategorias}
+                pedidos={pedidos} 
+                setPedidos={setPedidos}
+                adminPassword={adminPassword}
+                setAdminPassword={setAdminPassword}
+                mostrarNotificacion={mostrarNotificacion} 
+              />
+            )}
+          </main>
+
+          {/* FOOTER GENERAL */}
+          <footer className="bg-white dark:bg-zinc-900 border-t border-slate-100 dark:border-zinc-800 py-6 mt-12 transition-colors">
+            <div className="max-w-7xl mx-auto px-4 text-center">
+              <p className="text-xs text-slate-400 dark:text-zinc-500 font-medium">
+                © 2026 GastroSync. Terminal Privado Conectado de Forma Segura.
+              </p>
+            </div>
+          </footer>
+
+          {/* MODAL CONTRASEÑA ROL ADMIN */}
+          {modalPasswordAdmin && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fade-in">
+              <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl relative">
+                <button 
+                  onClick={() => { setModalPasswordAdmin(false); setPassInput(""); setPassError(""); }} 
+                  className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                >
+                  <i data-lucide="x" className="w-6 h-6"></i>
+                </button>
+
+                <div className="text-center mb-6">
+                  <div className="inline-block bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 p-3.5 rounded-2xl mb-3">
+                    <i data-lucide="lock" className="w-6 h-6"></i>
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">Acceso de Administración</h3>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Clave exclusiva para panel de gestión de menú</p>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Contraseña de Administrador</label>
+                    <input 
+                      type="password" 
+                      placeholder="••••••••" 
+                      value={passInput}
+                      onChange={(e) => setPassInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && intentarAccesoAdmin()}
+                      className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3.5 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                      autoFocus
+                    />
+                    {passError && <p className="text-xs text-rose-500 font-semibold mt-1.5">{passError}</p>}
+                  </div>
+
+                  <button 
+                    onClick={intentarAccesoAdmin}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-2xl transition-all shadow-lg shadow-indigo-600/25 text-sm"
+                  >
+                    Confirmar Contraseña
+                  </button>
+                  <p className="text-[10px] text-center text-slate-400">Contraseña inicial por defecto: <span className="font-bold">admin123</span></p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // INTERFAZ DE MESEROS (100% OPERATIVA Y MANUAL)
+    // ==========================================
+    function WaiterInterface({ menu, categorias, pedidos, setPedidos, mostrarNotificacion }) {
+      const [filtroCategoria, setFiltroCategoria] = useState("Todos");
+      const [mesaInput, setMesaInput] = useState("");
+      const [habitacionInput, setHabitacionInput] = useState("");
+      const [meseroResponsable, setMeseroResponsable] = useState("");
+      const [carrito, setCarrito] = useState([]);
+      const [busqueda, setBusqueda] = useState("");
+
+      // Filtrar platos que estén activos y creados por el administrador
+      const productosFiltrados = menu.filter(item => {
+        const coincideCat = filtroCategoria === "Todos" || item.categoria === filtroCategoria;
+        const coincideBusqueda = item.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
+                                 item.descripcion.toLowerCase().includes(busqueda.toLowerCase());
+        return item.activa && coincideCat && coincideBusqueda;
+      });
+
+      // Añadir al carrito manualmente
+      const agregarAlCarrito = (producto) => {
+        const itemExistente = carrito.find(item => item.productoId === producto.id);
+        if (itemExistente) {
+          setCarrito(carrito.map(item => 
+            item.productoId === producto.id ? { ...item, cantidad: item.cantidad + 1 } : item
+          ));
+        } else {
+          setCarrito([...carrito, {
+            productoId: producto.id,
+            nombre: producto.nombre,
+            precio: producto.precio,
+            cantidad: 1,
+            observaciones: ""
+          }]);
+        }
+        mostrarNotificacion(`Agregado manual: ${producto.nombre}`);
+      };
+
+      // Modificar cantidad manualmente
+      const cambiarCantidad = (id, incremento) => {
+        setCarrito(carrito.map(item => {
+          if (item.productoId === id) {
+            const nuevaCant = item.cantidad + incremento;
+            return nuevaCant > 0 ? { ...item, cantidad: nuevaCant } : item;
+          }
+          return item;
+        }).filter(item => item.cantidad > 0));
+      };
+
+      // Notas de la comanda
+      const actualizarObservacion = (id, notas) => {
+        setCarrito(carrito.map(item => 
+          item.productoId === id ? { ...item, observaciones: notas } : item
+        ));
+      };
+
+      const totalCarrito = carrito.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
+
+      // Confirmar y Enviar Pedido Manual
+      const enviarPedidoCompleto = (e) => {
+        e.preventDefault();
+        
+        // Validaciones estrictas exigidas
+        if (!meseroResponsable.trim()) {
+          mostrarNotificacion("Debe ingresar obligatoriamente el Nombre del Mesero.", "error");
+          return;
+        }
+        if (!mesaInput.trim()) {
+          mostrarNotificacion("Debe ingresar obligatoriamente un Número de Mesa.", "error");
+          return;
+        }
+        if (carrito.length === 0) {
+          mostrarNotificacion("El carrito está vacío. Agregue platos manualmente.", "error");
+          return;
+        }
+
+        const nuevoPedido = {
+          id: Date.now(),
+          mesa: mesaInput,
+          habitacion: habitacionInput,
+          mesero: meseroResponsable,
+          items: [...carrito],
+          estado: 'recibido',
+          creado_en: new Date().toISOString(),
+          actualizado_en: new Date().toISOString(),
+          tiempoPreparacion: null
+        };
+
+        const listadoPedidosActualizado = [...pedidos, nuevoPedido];
+        setPedidos(listadoPedidosActualizado);
+        
+        // Sincronización instantánea a través del evento del storage
+        localStorage.setItem('gastrosync_pedidos', JSON.stringify(listadoPedidosActualizado));
+
+        // Limpieza de interfaz
+        setCarrito([]);
+        setMesaInput("");
+        setHabitacionInput("");
+        mostrarNotificacion("¡Pedido registrado y enviado a cocina con éxito!", "success");
+      };
+
+      const misPedidos = pedidos.filter(p => p.estado !== 'despachado').reverse();
+
+      return (
+        <div className="space-y-8 animate-fade-in">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">Atención y Toma de Comandas</h2>
+              <p className="text-sm text-slate-500 dark:text-zinc-400 mt-1">Gestión 100% manual. No se simulan datos ni se generan órdenes fantasmas.</p>
+            </div>
+            
+            <div className="relative w-full md:w-80">
+              <input 
+                type="text" 
+                placeholder="Buscar plato en el menú..."
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+              />
+              <i data-lucide="search" className="absolute left-3.5 top-3 w-4.5 h-4.5 text-slate-400"></i>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            {/* SECCIÓN CATÁLOGO DEL MENÚ (MANUAL) */}
+            <div className="lg:col-span-2 space-y-6">
+              
+              <div className="flex gap-2 overflow-x-auto pb-2">
+                <button 
+                  onClick={() => setFiltroCategoria("Todos")}
+                  className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${
+                    filtroCategoria === "Todos" 
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-600/25' 
+                      : 'bg-white dark:bg-zinc-900 text-slate-600 dark:text-zinc-400 border-slate-200 dark:border-zinc-800 hover:bg-slate-50'
+                  }`}
+                >
+                  Todos los platos
+                </button>
+                {categorias.map(cat => (
+                  <button 
+                    key={cat}
+                    onClick={() => setFiltroCategoria(cat)}
+                    className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${
+                      filtroCategoria === cat 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-600/25' 
+                        : 'bg-white dark:bg-zinc-900 text-slate-600 dark:text-zinc-400 border-slate-200 dark:border-zinc-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {productosFiltrados.length === 0 ? (
+                <div className="bg-white dark:bg-zinc-900 p-16 text-center rounded-3xl border border-dashed border-slate-200 dark:border-zinc-800 shadow-sm">
+                  <i data-lucide="utensils-crosses" className="w-12 h-12 text-slate-300 dark:text-zinc-700 mx-auto mb-3"></i>
+                  <h4 className="text-sm font-bold text-slate-800 dark:text-zinc-200">No hay platos disponibles</h4>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 max-w-sm mx-auto">
+                    Solo se mostrarán platos reales cargados manualmente por el administrador en el Panel de Administración.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {productosFiltrados.map(platillo => (
+                    <div 
+                      key={platillo.id}
+                      className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-100 dark:border-zinc-800 p-4 shadow-sm flex gap-4 hover:shadow-lg transition-all"
+                    >
+                      <img 
+                        src={platillo.imagen} 
+                        alt={platillo.nombre} 
+                        className="w-24 h-24 object-cover rounded-xl bg-slate-100 dark:bg-zinc-800 shrink-0"
+                        onError={(e) => { e.target.src = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=150&q=80" }}
+                      />
+                      <div className="flex-grow flex flex-col justify-between">
+                        <div>
+                          <div className="flex justify-between items-start gap-1">
+                            <h4 className="font-bold text-slate-900 dark:text-white text-sm line-clamp-1">{platillo.nombre}</h4>
+                            <span className="text-[9px] bg-slate-100 dark:bg-zinc-850 text-slate-600 dark:text-zinc-400 px-1.5 py-0.5 rounded font-bold uppercase shrink-0">{platillo.categoria}</span>
+                          </div>
+                          <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 line-clamp-2 leading-relaxed">{platillo.descripcion}</p>
+                        </div>
+                        <div className="flex justify-between items-center mt-3">
+                          <span className="font-extrabold text-indigo-600 dark:text-indigo-400 text-sm">
+                            ${platillo.precio.toLocaleString('es-ES')}
+                          </span>
+                          <button 
+                            onClick={() => agregarAlCarrito(platillo)}
+                            className="bg-slate-900 hover:bg-indigo-600 text-white dark:bg-zinc-800 dark:hover:bg-indigo-600 text-xs font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
+                          >
+                            <i data-lucide="plus" className="w-3.5 h-3.5"></i>
+                            Agregar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* SECCIÓN REGISTRO DE PEDIDO */}
+            <div className="space-y-6">
+              <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-100 dark:border-zinc-800 p-6 shadow-md sticky top-24">
+                <div className="border-b border-slate-100 dark:border-zinc-800 pb-4 mb-4">
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <i data-lucide="shopping-cart" className="w-5 h-5 text-indigo-500"></i>
+                    Comanda Manual
+                  </h3>
+                  <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">La validación requiere datos reales del servicio</p>
+                </div>
+
+                <form onSubmit={enviarPedidoCompleto} className="space-y-4">
+                  
+                  {/* Datos del Responsable de Mesa */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Mesero Responsable *</label>
+                    <input 
+                      type="text" 
+                      required 
+                      placeholder="Nombre del Mesero" 
+                      value={meseroResponsable}
+                      onChange={(e) => setMeseroResponsable(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white font-bold"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Mesa *</label>
+                      <input 
+                        type="text" 
+                        required 
+                        placeholder="Mesa" 
+                        value={mesaInput}
+                        onChange={(e) => setMesaInput(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Habitación</label>
+                      <input 
+                        type="text" 
+                        placeholder="Opcional" 
+                        value={habitacionInput}
+                        onChange={(e) => setHabitacionInput(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white font-bold"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Elementos agregados al pedido */}
+                  <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+                    {carrito.length === 0 ? (
+                      <div className="text-center py-8 text-slate-400 dark:text-zinc-600 border border-dashed border-slate-100 dark:border-zinc-800 rounded-2xl">
+                        <i data-lucide="shopping-bag" className="w-8 h-8 mx-auto mb-2 opacity-50"></i>
+                        <p className="text-xs font-semibold">Seleccione platos para esta mesa</p>
+                      </div>
+                    ) : (
+                      carrito.map(item => (
+                        <div key={item.productoId} className="bg-slate-50 dark:bg-zinc-950 p-3 rounded-2xl space-y-2 border border-slate-100/50 dark:border-zinc-900">
+                          <div className="flex justify-between items-start gap-2">
+                            <span className="font-bold text-xs text-slate-900 dark:text-white line-clamp-1">{item.nombre}</span>
+                            <span className="text-xs text-slate-500 dark:text-zinc-400 font-extrabold shrink-0">${(item.precio * item.cantidad).toLocaleString('es-ES')}</span>
+                          </div>
+                          
+                          <div className="flex justify-between items-center">
+                            <input 
+                              type="text" 
+                              placeholder="Observación (Ej: Sin salsas)" 
+                              value={item.observaciones}
+                              onChange={(e) => actualizarObservacion(item.productoId, e.target.value)}
+                              className="bg-transparent text-[10px] text-slate-500 dark:text-zinc-400 border-b border-slate-200 dark:border-zinc-800 w-2/3 outline-none focus:border-indigo-500 transition-colors"
+                            />
+                            
+                            <div className="flex items-center gap-2 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-1 shrink-0 shadow-sm">
+                              <button type="button" onClick={() => cambiarCantidad(item.productoId, -1)} className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors">
+                                <i data-lucide="minus" className="w-3 h-3"></i>
+                              </button>
+                              <span className="text-xs font-extrabold text-slate-900 dark:text-white min-w-[14px] text-center">{item.cantidad}</span>
+                              <button type="button" onClick={() => cambiarCantidad(item.productoId, 1)} className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors">
+                                <i data-lucide="plus" className="w-3 h-3"></i>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Resumen Total */}
+                  {carrito.length > 0 && (
+                    <div className="bg-slate-50 dark:bg-zinc-950 p-4 rounded-2xl space-y-2.5">
+                      <div className="flex justify-between text-xs text-slate-500 dark:text-zinc-400">
+                        <span>Total de productos:</span>
+                        <span className="font-bold text-slate-700 dark:text-white">{carrito.reduce((acc, it) => acc + it.cantidad, 0)} platos</span>
+                      </div>
+                      <div className="flex justify-between border-t border-slate-200 dark:border-zinc-800 pt-2.5">
+                        <span className="text-sm font-black text-slate-900 dark:text-white">Subtotal comanda:</span>
+                        <span className="text-base font-extrabold text-indigo-600 dark:text-indigo-400">${totalCarrito.toLocaleString('es-ES')}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <button 
+                    type="submit" 
+                    disabled={carrito.length === 0}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-55 disabled:hover:bg-indigo-600 text-white font-bold py-3.5 rounded-2xl transition-all shadow-lg shadow-indigo-600/25 text-sm uppercase tracking-wider"
+                  >
+                    Confirmar y Enviar Pedido
+                  </button>
+                </form>
+              </div>
+            </div>
+
+          </div>
+
+          {/* HISTORIAL Y SEGUIMIENTO EN VIVO PARA MESEROS */}
+          <section className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-100 dark:border-zinc-800 p-6 shadow-md mt-6">
+            <div className="border-b border-slate-100 dark:border-zinc-800 pb-4 mb-4">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <i data-lucide="loader" className="w-5 h-5 text-indigo-500 animate-spin"></i>
+                Seguimiento de Comandas en Vivo
+              </h3>
+              <p className="text-xs text-slate-400 dark:text-zinc-500">Se actualiza automáticamente al ritmo de la cocina</p>
+            </div>
+
+            {misPedidos.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 dark:text-zinc-600">
+                <i data-lucide="clock" className="w-10 h-10 mx-auto mb-3 opacity-30"></i>
+                <p className="text-sm font-semibold">No tiene comandas activas pendientes.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {misPedidos.map(p => (
+                  <div key={p.id} className="border border-slate-100 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 p-4 rounded-2xl space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="text-xs text-indigo-600 dark:text-indigo-400 font-extrabold bg-indigo-50 dark:bg-indigo-950 px-2.5 py-1 rounded-full">
+                          Mesa {p.mesa}
+                        </span>
+                        {p.habitacion && (
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-extrabold bg-emerald-50 dark:bg-emerald-950 px-2.5 py-1 rounded-full ml-1.5">
+                            Hab {p.habitacion}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400">{new Date(p.creado_en).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                    </div>
+
+                    <div className="space-y-1.5 border-b border-slate-200/50 dark:border-zinc-800/40 pb-2">
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wider font-extrabold">Responsable: {p.mesero}</p>
+                      {p.items.map((it, idx) => (
+                        <div key={idx} className="flex justify-between text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                          <span>x{it.cantidad} {it.nombre}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="space-y-2 pt-1">
+                      <div className="flex justify-between items-center text-xs font-extrabold">
+                        <span>Estado:</span>
+                        <span className={`uppercase text-[10px] px-2.5 py-1 rounded-full ${
+                          p.estado === 'recibido' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
+                          'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400'
+                        }`}>
+                          {p.estado === 'recibido' ? 'Recibido' : 'En Preparación'}
+                        </span>
+                      </div>
+
+                      <div className="w-full bg-slate-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                        <div className={`h-full transition-all duration-500 ${
+                          p.estado === 'recibido' ? 'w-1/2 bg-blue-500' : 'w-full bg-amber-500 animate-pulse'
+                        }`}></div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // INTERFAZ DE COCINA (MANUAL Y EN TIEMPO REAL)
+    // ==========================================
+    function KitchenInterface({ pedidos, setPedidos, mostrarNotificacion }) {
+      const pedidosActivos = pedidos.filter(p => p.estado !== 'despachado');
+      const [tiempos, setTiempos] = useState({});
+
+      useEffect(() => {
+        const interval = setInterval(() => {
+          const nuevosTiempos = {};
+          pedidosActivos.forEach(p => {
+            const diferencia = Math.floor((Date.now() - new Date(p.creado_en).getTime()) / 1000);
+            nuevosTiempos[p.id] = diferencia;
+          });
+          setTiempos(nuevosTiempos);
+        }, 1000);
+
+        return () => clearInterval(interval);
+      }, [pedidosActivos]);
+
+      const formatearTiempo = (segundos) => {
+        if (!segundos && segundos !== 0) return "00:00";
+        const m = Math.floor(segundos / 60).toString().padStart(2, '0');
+        const s = (segundos % 60).toString().padStart(2, '0');
+        return `${m}:${s}`;
+      };
+
+      const iniciarPreparacion = (id) => {
+        const actualizados = pedidos.map(p => {
+          if (p.id === id) {
+            return { ...p, estado: 'en_preparacion', actualizado_en: new Date().toISOString() };
+          }
+          return p;
+        });
+        setPedidos(actualizados);
+        localStorage.setItem('gastrosync_pedidos', JSON.stringify(actualizados));
+        mostrarNotificacion("Pedido marcado: En Preparación.", "info");
+      };
+
+      const despacharPedido = (id) => {
+        const actualizados = pedidos.map(p => {
+          if (p.id === id) {
+            const segundos = Math.floor((Date.now() - new Date(p.creado_en).getTime()) / 1000);
+            return { 
+              ...p, 
+              estado: 'despachado', 
+              actualizado_en: new Date().toISOString(),
+              tiempoPreparacion: segundos
+            };
+          }
+          return p;
+        });
+        setPedidos(actualizados);
+        localStorage.setItem('gastrosync_pedidos', JSON.stringify(actualizados));
+        mostrarNotificacion("¡Pedido despachado a la barra con éxito!", "success");
+      };
+
+      return (
+        <div className="space-y-6 animate-fade-in">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-zinc-800 pb-4">
+            <div>
+              <h2 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                <span className="w-3.5 h-3.5 rounded-full bg-amber-500 animate-pulse"></span>
+                Consola de Cocina & Barra
+              </h2>
+              <p className="text-sm text-slate-500 dark:text-zinc-400">Recepción manual de comandas de salón. Tiempo de servicio cronometrado.</p>
+            </div>
+            
+            <div className="bg-slate-100 dark:bg-zinc-950 px-4 py-2 rounded-2xl flex items-center gap-3">
+              <span className="text-xs font-bold text-slate-600 dark:text-zinc-400">Cola Activa:</span>
+              <span className="text-sm font-extrabold bg-indigo-600 text-white px-2.5 py-0.5 rounded-full">{pedidosActivos.length} comandas</span>
+            </div>
+          </div>
+
+          {pedidosActivos.length === 0 ? (
+            <div className="bg-white dark:bg-zinc-900 p-20 text-center rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm max-w-lg mx-auto">
+              <div className="bg-emerald-50 dark:bg-emerald-950/30 p-4 rounded-full w-fit mx-auto mb-4 text-emerald-500">
+                <i data-lucide="check-circle" className="w-10 h-10"></i>
+              </div>
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white">Cocina Limpia</h3>
+              <p className="text-sm text-slate-500 dark:text-zinc-400 mt-2">No se registran comandas ingresadas por los meseros en este momento.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {pedidosActivos.map(pedido => {
+                const tiempoTranscurrido = tiempos[pedido.id] || 0;
+                const esCritico = tiempoTranscurrido > 900; // Alerta si supera los 15 minutos en cola
+
+                return (
+                  <div 
+                    key={pedido.id}
+                    className={`bg-white dark:bg-zinc-900 rounded-3xl border shadow-sm overflow-hidden flex flex-col justify-between transition-all duration-300 ${
+                      pedido.estado === 'en_preparacion' 
+                        ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-lg' 
+                        : esCritico 
+                          ? 'border-rose-500 animate-pulse' 
+                          : 'border-slate-100 dark:border-zinc-800'
+                    }`}
+                  >
+                    
+                    {/* Encabezado Comanda */}
+                    <div className="p-4 border-b border-slate-100 dark:border-zinc-800 flex justify-between items-start bg-slate-50 dark:bg-zinc-900/50">
+                      <div>
+                        <h4 className="font-extrabold text-base text-slate-900 dark:text-white">Mesa {pedido.mesa}</h4>
+                        {pedido.habitacion && (
+                          <span className="text-[10px] text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-0.5 rounded font-extrabold">Hab: {pedido.habitacion}</span>
+                        )}
+                        <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">Atendido por: {pedido.mesero}</p>
+                      </div>
+
+                      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-mono font-extrabold ${
+                        esCritico 
+                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-400' 
+                          : 'bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300'
+                      }`}>
+                        <i data-lucide="clock" className="w-3.5 h-3.5"></i>
+                        <span>{formatearTiempo(tiempoTranscurrido)}</span>
+                      </div>
+                    </div>
+
+                    {/* Detalle */}
+                    <div className="p-5 flex-grow space-y-4">
+                      {pedido.items.map((item, idx) => (
+                        <div key={idx} className="space-y-1 pb-3 border-b border-slate-100 dark:border-zinc-800/40 last:border-none last:pb-0">
+                          <div className="flex justify-between items-start">
+                            <span className="text-sm font-bold text-slate-800 dark:text-zinc-200">
+                              <span className="text-indigo-600 dark:text-indigo-400 font-extrabold mr-2">x{item.cantidad}</span>
+                              {item.nombre}
+                            </span>
+                          </div>
+                          {item.observaciones && (
+                            <div className="text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 border border-rose-100/40 dark:border-rose-950/40 p-2 rounded-xl font-bold flex items-start gap-1">
+                              <i data-lucide="alert-circle" className="w-3 h-3 mt-0.5 shrink-0"></i>
+                              <span>Nota: {item.observaciones}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Botones de Control */}
+                    <div className="p-4 bg-slate-50 dark:bg-zinc-900/30 border-t border-slate-100 dark:border-zinc-800 gap-2 flex">
+                      {pedido.estado === 'recibido' ? (
+                        <button 
+                          onClick={() => iniciarPreparacion(pedido.id)}
+                          className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-3 rounded-2xl text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 shadow-sm shadow-amber-500/10"
+                        >
+                          <i data-lucide="play" className="w-4 h-4 fill-slate-950"></i>
+                          Iniciar Pedido
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={() => despacharPedido(pedido.id)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 rounded-2xl text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-600/10"
+                        >
+                          <i data-lucide="check" className="w-4 h-4"></i>
+                          Despachar Pedido
+                        </button>
+                      )}
+                    </div>
+
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
+    // INTERFAZ DE ADMINISTRACIÓN (DISEÑO SAAS)
+    // ==========================================
+    function AdminInterface({ menu, setMenu, categorias, setCategorias, pedidos, setPedidos, adminPassword, setAdminPassword, mostrarNotificacion }) {
+      const [seccion, setSeccion] = useState("dashboard"); // 'dashboard' | 'menu' | 'password'
+      
+      // Formulario manual de productos
+      const [formProducto, setFormProducto] = useState({
+        id: null,
+        nombre: "",
+        precio: "",
+        categoria: categorias[0] || "",
+        descripcion: "",
+        activa: true,
+        imagen: ""
+      });
+      const [modoEdicion, setModoEdicion] = useState(false);
+      const [nuevaCategoria, setNuevaCategoria] = useState("");
+
+      // --- CÁLCULOS ESTADÍSTICOS REALES ---
+      const totalPedidos = pedidos.length;
+      const pedidosEnPreparacion = pedidos.filter(p => p.estado === 'en_preparacion').length;
+      const pedidosDespachados = pedidos.filter(p => p.estado === 'despachado').length;
+
+      const pedidosConTiempo = pedidos.filter(p => p.tiempoPreparacion != null);
+      const tiempoPromedio = pedidosConTiempo.length > 0 
+        ? Math.round(pedidosConTiempo.reduce((acc, curr) => acc + curr.tiempoPreparacion, 0) / pedidosConTiempo.length)
+        : 0;
+
+      const ventasTotales = pedidos.reduce((acc, ped) => {
+        const costoPedido = ped.items.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
+        return acc + costoPedido;
+      }, 0);
+
+      // Producto estrella real
+      const conteoProductos = {};
+      pedidos.forEach(p => {
+        p.items.forEach(it => {
+          conteoProductos[it.nombre] = (conteoProductos[it.nombre] || 0) + it.cantidad;
+        });
+      });
+      const topPlatillo = Object.entries(conteoProductos).sort((a,b) => b[1] - a[1])[0] || ["Ninguno", 0];
+
+      // --- EXPORTAR REPORTES DIRECTO A CSV ---
+      const exportarReportesCSV = () => {
+        if (pedidos.length === 0) {
+          mostrarNotificacion("No hay información de comandas para exportar.", "error");
+          return;
+        }
+
+        let contenidoCSV = "ID Pedido,Mesa,Habitación,Mesero Responsable,Estado,Fecha de Pedido,Cantidad de Platillos,Total ($),Tiempo Preparación (s)\n";
+        
+        pedidos.forEach(p => {
+          const totalComanda = p.items.reduce((sum, it) => sum + (it.precio * it.cantidad), 0);
+          const cantidadItems = p.items.reduce((sum, it) => sum + it.cantidad, 0);
+          contenidoCSV += `${p.id},"${p.mesa}","${p.habitacion || 'N/A'}","${p.mesero}","${p.estado}","${new Date(p.creado_en).toLocaleString()}",${amountEscape(cantidadItems)},${totalComanda},${p.tiempoPreparacion || 'N/A'}\n`;
+        });
+
+        // Crear elemento de descarga seguro
+        const blob = new Blob(["\uFEFF" + contenidoCSV], { type: 'text/csv;charset=utf-8;' });
+        const enlace = document.createElement("a");
+        enlace.href = URL.createObjectURL(blob);
+        enlace.setAttribute("download", `GastroSync_Reporte_Ventas_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(enlace);
+        enlace.click();
+        document.body.removeChild(enlace);
+        mostrarNotificacion("Reporte descargado con éxito.", "success");
+      };
+
+      const amountEscape = (value) => {
+        return typeof value === 'number' ? value : 0;
+      };
+
+      // --- AGREGAR / EDITAR PRODUCTO (MANUAL) ---
+      const guardarProducto = (e) => {
+        e.preventDefault();
+        if (!formProducto.nombre || !formProducto.precio) {
+          mostrarNotificacion("Complete todos los campos del producto.", "error");
+          return;
+        }
+
+        const precioNumerico = parseFloat(formProducto.precio);
+        if (isNaN(precioNumerico) || precioNumerico <= 0) {
+          mostrarNotificacion("Ingrese un precio numérico válido.", "error");
+          return;
+        }
+
+        const imagenUrl = formProducto.imagen.trim() || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=400&q=80";
+
+        if (modoEdicion) {
+          const menuActualizado = menu.map(item => 
+            item.id === formProducto.id 
+              ? { ...formProducto, precio: precioNumerico, imagen: imagenUrl } 
+              : item
+          );
+          setMenu(menuActualizado);
+          mostrarNotificacion("Producto modificado correctamente.");
+        } else {
+          const nuevoItem = {
+            ...formProducto,
+            id: Date.now(),
+            precio: precioNumerico,
+            imagen: imagenUrl
+          };
+          setMenu([...menu, nuevoItem]);
+          mostrarNotificacion("Nuevo producto añadido al menú.");
+        }
+
+        // Reset
+        setFormProducto({
+          id: null,
+          nombre: "",
+          precio: "",
+          categoria: categorias[0] || "",
+          descripcion: "",
+          activa: true,
+          imagen: ""
+        });
+        setModoEdicion(false);
+      };
+
+      const iniciarEdicion = (item) => {
+        setFormProducto(item);
+        setModoEdicion(true);
+      };
+
+      const eliminarProducto = (id) => {
+        const actualizados = menu.filter(item => item.id !== id);
+        setMenu(actualizados);
+        mostrarNotificacion("Producto removido del menú.", "info");
+      };
+
+      const toggleActivoProducto = (id) => {
+        const actualizados = menu.map(item => 
+          item.id === id ? { ...item, activa: !item.activa } : item
+        );
+        setMenu(actualizados);
+        mostrarNotificacion("Visibilidad del producto actualizada.");
+      };
+
+      const agregarNuevaCategoria = (e) => {
+        e.preventDefault();
+        if (!nuevaCategoria.trim()) return;
+        if (categorias.includes(nuevaCategoria.trim())) {
+          mostrarNotificacion("La categoría ya existe.", "error");
+          return;
+        }
+        setCategorias([...categorias, nuevaCategoria.trim()]);
+        setNuevaCategoria("");
+        mostrarNotificacion("Categoría creada con éxito.");
+      };
+
+      // --- CAMBIO DE CONTRASEÑA ADMINISTRADOR ---
+      const [passAnterior, setPassAnterior] = useState("");
+      const [passNueva, setPassNueva] = useState("");
+      const [cambioClaveError, setCambioClaveError] = useState("");
+
+      const cambiarPasswordAdmin = (e) => {
+        e.preventDefault();
+        if (passAnterior !== adminPassword) {
+          setCambioClaveError("La contraseña actual es incorrecta.");
+          return;
+        }
+        if (passNueva.length < 4) {
+          setCambioClaveError("La nueva clave debe tener al menos 4 caracteres.");
+          return;
+        }
+        setAdminPassword(passNueva);
+        localStorage.setItem('gastrosync_admin_pass', passNueva);
+        setPassAnterior("");
+        setPassNueva("");
+        setCambioClaveError("");
+        mostrarNotificacion("Contraseña del panel administrativo cambiada con éxito.", "success");
+      };
+
+      return (
+        <div className="space-y-6 animate-fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-zinc-800 pb-4">
+            <div>
+              <h2 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
+                <i data-lucide="sliders" className="w-6 h-6 text-emerald-500"></i>
+                Panel Administrativo
+              </h2>
+              <p className="text-sm text-slate-500 dark:text-zinc-400">Control total del menú de forma estrictamente manual. Cero simulación.</p>
+            </div>
+
+            <div className="flex gap-2 bg-slate-100 dark:bg-zinc-900 p-1 rounded-2xl border border-slate-200 dark:border-zinc-800">
+              <button 
+                onClick={() => setSeccion("dashboard")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  seccion === 'dashboard' ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-900'
+                }`}
+              >
+                <i data-lucide="line-chart" className="w-4 h-4"></i>
+                Dashboard
+              </button>
+              <button 
+                onClick={() => setSeccion("menu")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  seccion === 'menu' ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-900'
+                }`}
+              >
+                <i data-lucide="menu" className="w-4 h-4"></i>
+                Menú & Categorías
+              </button>
+              <button 
+                onClick={() => setSeccion("password")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  seccion === 'password' ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow' : 'text-slate-500 dark:text-zinc-400 hover:text-slate-900'
+                }`}
+              >
+                <i data-lucide="key" className="w-4 h-4"></i>
+                Seguridad
+              </button>
+            </div>
+          </div>
+
+          {/* DASHBOARD DE MÉTRICAS */}
+          {seccion === 'dashboard' && (
+            <div className="space-y-6">
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                
+                <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 p-6 rounded-3xl shadow-sm flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Ventas Reales</p>
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white">${ventasTotales.toLocaleString('es-ES')}</h3>
+                  </div>
+                  <div className="bg-emerald-50 dark:bg-emerald-950/40 p-4 rounded-2xl text-emerald-600 dark:text-emerald-400">
+                    <i data-lucide="dollar-sign" className="w-6 h-6"></i>
+                  </div>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 p-6 rounded-3xl shadow-sm flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Comandas Procesadas</p>
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white">{totalPedidos} pedidos</h3>
+                  </div>
+                  <div className="bg-indigo-50 dark:bg-indigo-950/40 p-4 rounded-2xl text-indigo-600 dark:text-indigo-400">
+                    <i data-lucide="shopping-bag" className="w-6 h-6"></i>
+                  </div>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 p-6 rounded-3xl shadow-sm flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Tiempo Promedio</p>
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white">
+                      {tiempoPromedio > 0 ? `${Math.floor(tiempoPromedio/60)}m ${tiempoPromedio%60}s` : "0s"}
+                    </h3>
+                  </div>
+                  <div className="bg-amber-50 dark:bg-amber-950/40 p-4 rounded-2xl text-amber-600 dark:text-amber-400">
+                    <i data-lucide="activity" className="w-6 h-6"></i>
+                  </div>
+                </div>
+
+                <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 p-6 rounded-3xl shadow-sm flex items-center justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Más Solicitado</p>
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white line-clamp-1">{topPlatillo[0]}</h3>
+                    <p className="text-[10px] text-slate-400 font-bold">Solicitado {topPlatillo[1]} veces</p>
+                  </div>
+                  <div className="bg-purple-50 dark:bg-purple-950/40 p-4 rounded-2xl text-purple-600 dark:text-purple-400">
+                    <i data-lucide="award" className="w-6 h-6"></i>
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm">
+                <div>
+                  <h3 className="font-extrabold text-slate-900 dark:text-white text-base">Descarga de Reportes de Turno</h3>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">Consolida la información de auditoría del restaurante directamente a Excel / CSV.</p>
+                </div>
+                <button 
+                  onClick={exportarReportesCSV}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-5 rounded-2xl text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 whitespace-nowrap"
+                >
+                  <i data-lucide="download-cloud" className="w-4 h-4"></i>
+                  Exportar Historial (CSV)
+                </button>
+              </div>
+
+              {/* Historial */}
+              <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-slate-100 dark:border-zinc-800">
+                  <h3 className="font-black text-slate-900 dark:text-white text-lg">Historial de Transacciones Manuales</h3>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Todas las comandas han sido registradas manualmente por meseros autorizados</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-zinc-900/50 border-b border-slate-100 dark:border-zinc-800 text-slate-500 dark:text-zinc-400 text-xs font-bold uppercase tracking-wider">
+                        <th className="p-4 pl-6">ID Pedido</th>
+                        <th className="p-4">Mesa / Habitación</th>
+                        <th className="p-4">Mesero Responsable</th>
+                        <th className="p-4">Platillos pedidos</th>
+                        <th className="p-4">Total Comanda</th>
+                        <th className="p-4">Tiempo de Despacho</th>
+                        <th className="p-4">Estado</th>
+                        <th className="p-4 pr-6">Hora</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-zinc-800 text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                      {pedidos.length === 0 ? (
+                        <tr>
+                          <td colSpan="8" className="text-center p-12 text-slate-400">
+                            No se registran comandas en el sistema. Realice un pedido desde la pantalla de meseros para ver los datos.
+                          </td>
+                        </tr>
+                      ) : (
+                        [...pedidos].reverse().map(p => {
+                          const subtotal = p.items.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
+                          return (
+                            <tr key={p.id} className="hover:bg-slate-50/55 dark:hover:bg-zinc-900/30 transition-colors">
+                              <td className="p-4 pl-6 font-mono text-[10px] text-slate-400">{p.id}</td>
+                              <td className="p-4">
+                                <div className="space-x-1.5">
+                                  <span className="font-extrabold bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 px-2 py-0.5 rounded">Mesa {p.mesa}</span>
+                                  {p.habitacion && <span className="bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 px-1.5 py-0.5 rounded font-extrabold">Hab {p.habitacion}</span>}
+                                </div>
+                              </td>
+                              <td className="p-4 uppercase text-slate-600 dark:text-zinc-400 font-extrabold">{p.mesero}</td>
+                              <td className="p-4 max-w-[200px] truncate">
+                                {p.items.map(it => `${it.nombre} (x${it.cantidad})`).join(', ')}
+                              </td>
+                              <td className="p-4 font-bold text-slate-900 dark:text-white">${subtotal.toLocaleString('es-ES')}</td>
+                              <td className="p-4">
+                                {p.tiempoPreparacion ? `${Math.floor(p.tiempoPreparacion/60)}m ${p.tiempoPreparacion%60}s` : <span className="text-slate-400 italic">En cola</span>}
+                              </td>
+                              <td className="p-4">
+                                <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                                  p.estado === 'recibido' ? 'bg-blue-100 text-blue-800' :
+                                  p.estado === 'en_preparacion' ? 'bg-amber-100 text-amber-800' :
+                                  'bg-emerald-100 text-emerald-800'
+                                }`}>
+                                  {p.estado}
+                                </span>
+                              </td>
+                              <td className="p-4 pr-6 text-slate-400 font-mono">{new Date(p.creado_en).toLocaleTimeString()}</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* MENU & CATEGORÍAS (100% CREACIÓN MANUAL POR EL ADMIN) */}
+          {seccion === 'menu' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              
+              <div className="bg-white dark:bg-zinc-900 p-6 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-md h-fit space-y-6">
+                <div>
+                  <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                    {modoEdicion ? "Modificar Platillo del Menú" : "Añadir Platillo al Menú"}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">Defina las propiedades del producto ofertado.</p>
+                </div>
+
+                <form onSubmit={guardarProducto} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nombre Comercial *</label>
+                    <input 
+                      type="text" required placeholder="Ejem: Hamburguesa Suprema" 
+                      value={formProducto.nombre}
+                      onChange={(e) => setFormProducto({...formProducto, nombre: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Precio Unitario ($) *</label>
+                      <input 
+                        type="number" required placeholder="Ejem: 18500" 
+                        value={formProducto.precio}
+                        onChange={(e) => setFormProducto({...formProducto, precio: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Categoría *</label>
+                      <select 
+                        value={formProducto.categoria}
+                        onChange={(e) => setFormProducto({...formProducto, categoria: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white font-semibold"
+                      >
+                        {categorias.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">URL Imagen del Plato</label>
+                    <input 
+                      type="url" placeholder="https://..." 
+                      value={formProducto.imagen}
+                      onChange={(e) => setFormProducto({...formProducto, imagen: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Descripción / Ingredientes</label>
+                    <textarea 
+                      rows="3" placeholder="Detalle ingredientes clave o notas de alergia..."
+                      value={formProducto.descripcion}
+                      onChange={(e) => setFormProducto({...formProducto, descripcion: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                    ></textarea>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="checkbox" id="form-activo" 
+                      checked={formProducto.activa}
+                      onChange={(e) => setFormProducto({...formProducto, activa: e.target.checked})}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                    />
+                    <label htmlFor="form-activo" className="text-xs font-bold text-slate-600 dark:text-zinc-400">¿Producto disponible para la venta?</label>
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button 
+                      type="submit"
+                      className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-2xl text-xs uppercase tracking-wider transition-all"
+                    >
+                      {modoEdicion ? "Guardar Cambios" : "Crear Producto"}
+                    </button>
+                    {modoEdicion && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setFormProducto({ id: null, nombre: "", precio: "", categoria: categorias[0] || "", descripcion: "", activa: true, imagen: "" });
+                          setModoEdicion(false);
+                        }}
+                        className="bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 text-slate-700 dark:text-white font-bold px-4 py-3 rounded-2xl text-xs transition-all"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
+                </form>
+
+                {/* Subformulario de Categorías */}
+                <div className="border-t border-slate-100 dark:border-zinc-800 pt-6 space-y-3">
+                  <div>
+                    <h4 className="font-extrabold text-slate-950 dark:text-white text-sm">Gestionar Categorías</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Agregue nuevos departamentos al menú</p>
+                  </div>
+                  <form onSubmit={agregarNuevaCategoria} className="flex gap-2">
+                    <input 
+                      type="text" required placeholder="Ejem: Bebidas Calientes"
+                      value={nuevaCategoria}
+                      onChange={(e) => setNuevaCategoria(e.target.value)}
+                      className="flex-1 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                    />
+                    <button 
+                      type="submit"
+                      className="bg-slate-900 dark:bg-zinc-800 hover:bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all"
+                    >
+                      Añadir
+                    </button>
+                  </form>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {categorias.map(cat => (
+                      <span key={cat} className="bg-slate-100 dark:bg-zinc-850 text-slate-700 dark:text-zinc-300 px-2 py-1 rounded text-[10px] font-bold">
+                        {cat}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Lista Completa en Inventario */}
+              <div className="lg:col-span-2 bg-white dark:bg-zinc-900 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm overflow-hidden h-fit">
+                <div className="p-6 border-b border-slate-100 dark:border-zinc-800">
+                  <h3 className="font-black text-slate-900 dark:text-white text-lg">Catálogo del Menú</h3>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Los cambios se verán reflejados inmediatamente en todos los terminales de meseros</p>
+                </div>
+
+                <div className="divide-y divide-slate-100 dark:divide-zinc-800">
+                  {menu.length === 0 ? (
+                    <div className="p-12 text-center text-slate-400">
+                      No hay productos registrados en el menú. Utilice el formulario de la izquierda para ingresar el primero.
+                    </div>
+                  ) : (
+                    menu.map(item => (
+                      <div key={item.id} className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:bg-slate-50/55 dark:hover:bg-zinc-900/30 transition-colors">
+                        <div className="flex gap-4 items-center">
+                          <img 
+                            src={item.imagen} 
+                            alt={item.nombre} 
+                            className="w-14 h-14 object-cover rounded-xl bg-slate-100 dark:bg-zinc-800 shrink-0"
+                            onError={(e) => { e.target.src = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=100&q=80" }}
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-slate-900 dark:text-white text-sm">{item.nombre}</h4>
+                              <span className="text-[9px] bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 px-1.5 py-0.5 rounded font-bold uppercase">{item.categoria}</span>
+                            </div>
+                            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5 font-bold text-indigo-600 dark:text-indigo-400">${item.precio.toLocaleString('es-ES')}</p>
+                            <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{item.descripcion || 'Sin descripción detallada.'}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                          <button 
+                            onClick={() => toggleActivoProducto(item.id)}
+                            className={`px-3 py-1.5 rounded-xl text-[10px] font-extrabold transition-all border ${
+                              item.activa 
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/30' 
+                                : 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/30'
+                            }`}
+                          >
+                            {item.activa ? "Disponible" : "Pausado"}
+                          </button>
+
+                          <button 
+                            onClick={() => iniciarEdicion(item)}
+                            className="p-2 rounded-xl bg-slate-50 dark:bg-zinc-850 hover:bg-indigo-50 text-slate-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                            title="Editar"
+                          >
+                            <i data-lucide="edit-3" className="w-4 h-4"></i>
+                          </button>
+
+                          <button 
+                            onClick={() => eliminarProducto(item.id)}
+                            className="p-2 rounded-xl bg-slate-50 dark:bg-zinc-850 hover:bg-rose-50 text-slate-600 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                            title="Eliminar"
+                          >
+                            <i data-lucide="trash" className="w-4 h-4"></i>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* CONFIGURACIÓN DE SEGURIDAD */}
+          {seccion === 'password' && (
+            <div className="max-w-md bg-white dark:bg-zinc-900 p-6 md:p-8 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-md">
+              <div className="mb-6">
+                <h3 className="font-extrabold text-slate-900 dark:text-white text-base">Configuración de Seguridad</h3>
+                <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">Modifique la contraseña exclusiva de acceso administrativo.</p>
+              </div>
+
+              <form onSubmit={cambiarPasswordAdmin} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Contraseña Actual *</label>
+                  <input 
+                    type="password" required placeholder="••••••••"
+                    value={passAnterior}
+                    onChange={(e) => setPassAnterior(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nueva Contraseña *</label>
+                  <input 
+                    type="password" required placeholder="Mínimo 4 caracteres"
+                    value={passNueva}
+                    onChange={(e) => setPassNueva(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-2xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                  />
+                </div>
+
+                {cambioClaveError && <p className="text-xs text-rose-500 font-bold mt-1">{cambioClaveError}</p>}
+
+                <button 
+                  type="submit"
+                  className="w-full bg-slate-900 dark:bg-zinc-800 hover:bg-indigo-600 text-white font-bold py-3.5 rounded-2xl text-xs uppercase tracking-wider transition-all"
+                >
+                  Actualizar Contraseña
+                </button>
+              </form>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    // --- MONTAJE DE LA APP REACT EN EL NÚCLEO ---
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
